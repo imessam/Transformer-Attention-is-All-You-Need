@@ -109,7 +109,7 @@ class EncoderLayer(torch.nn.Module):
 
         super(EncoderLayer, self).__init__()
         
-        self.subLayer_1 = torch.nn.ModuleList([MultiHeadAttention(device = device),
+        self.subLayer_1 = torch.nn.ModuleList([MultiHeadAttention(d_model = d_model, device = device),
                            nn.Dropout(dropout),
                            AddNorm(d_model, device = device)])
         self.subLayer_2 = torch.nn.ModuleList([FeedForward(d_model, d_ff, dropout, device = device),
@@ -151,10 +151,10 @@ class DecoderLayer(torch.nn.Module):
 
         super(DecoderLayer, self).__init__()
         
-        self.subLayer_1 = torch.nn.ModuleList([MultiHeadAttention(device = device),
+        self.subLayer_1 = torch.nn.ModuleList([MultiHeadAttention(d_model = d_model, device = device),
                            nn.Dropout(dropout),
                            AddNorm(d_model, device = device)])
-        self.subLayer_2 = torch.nn.ModuleList([MultiHeadAttention(device = device),
+        self.subLayer_2 = torch.nn.ModuleList([MultiHeadAttention(d_model = d_model, device = device),
                            nn.Dropout(dropout),
                            AddNorm(d_model, device = device)])
         self.subLayer_3 = torch.nn.ModuleList([FeedForward(d_model, d_ff, dropout, device = device),
@@ -337,7 +337,7 @@ class FeedForward(torch.nn.Module):
     def forward(self, x):
         
                 
-        return self.w2(self.dropout(self.w1(x).relu()))
+        return self.w2(self.dropout(self.w1(x)))
 
 
 
