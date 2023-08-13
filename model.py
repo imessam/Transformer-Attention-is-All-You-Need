@@ -7,43 +7,40 @@ from torchvision import transforms
 
 class Transformer(torch.nn.Module):
     
-    def __init__(self, src_vocabSize, tgt_vocabSize, src_max_len = 150, tgt_max_len = 150, d_embed = 512, d_model = 512, d_ff = 2048, 
+    def __init__(self, src_vocabSize, tgt_vocabSize, src_max_len = 150, tgt_max_len = 150, noHeads = 8, d_model = 512, d_ff = 2048, 
                  dropout = 0.1, noEncoder = 6, noDecoder = 6, pad_index = 2, device ="cpu"):
 
         super(Transformer, self).__init__()
         self.device = device
         self.d_model = d_model
         
-        ##Input Embedding##
-        self.input_embedding = torch.nn.Embedding(num_embeddings = src_vocabSize, embedding_dim = d_embed, padding_idx = pad_index, device = device)
+#         ##Input Embedding##
+#         self.input_embedding = torch.nn.Embedding(num_embeddings = src_vocabSize, embedding_dim = d_model, padding_idx = pad_index, device = device)
 
-        ##Output Embedding##
-        self.output_embedding = torch.nn.Embedding(num_embeddings = tgt_vocabSize, embedding_dim = d_embed, padding_idx = pad_index, device = device)
+#         ##Output Embedding##
+#         self.output_embedding = torch.nn.Embedding(num_embeddings = tgt_vocabSize, embedding_dim = d_model, padding_idx = pad_index, device = device)
+
+        ##Input and Output Embedding##
+        self.embedding = torch.nn.Embedding(num_embeddings = src_vocabSize, embedding_dim = d_model, padding_idx = pad_index, device = device)
 
         ##Positional Encoding##
         self.inp_pos_encoding = PositionalEncoding(d_model, dropout, max_len = src_max_len, device = device)
         self.out_pos_encoding = PositionalEncoding(d_model, dropout, max_len = tgt_max_len, device = device)
         
         ##Encoder##
-        self.encoder = torch.nn.ModuleList([EncoderLayer(d_model, d_ff, dropout, device = device) for i in range(noEncoder)])
+        self.encoder = torch.nn.ModuleList([EncoderLayer(noHeads, d_model, d_ff, dropout, device = device) for i in range(noEncoder)])
         
         ##Decoder##
-        self.decoder = torch.nn.ModuleList([DecoderLayer(d_model, d_ff, dropout, device = device) for i in range(noDecoder)])
+        self.decoder = torch.nn.ModuleList([DecoderLayer(noHeads, d_model, d_ff, dropout, device = device) for i in range(noDecoder)])
 
-        ##Final Layer##
-        self.finalLayer = torch.nn.Linear(in_features = d_model, out_features = tgt_vocabSize, device = device)       
-        self.softmax = torch.nn.LogSoftmax(dim = -1)
+        ##Final Layer with shared weights##
+        self.finalLayer = torch.nn.Linear(in_features = d_model, out_features = tgt_vocabSize, device = device)   
+        self.finalLayer.weight = nn.Parameter(self.embedding.weight)
+        self.softmax = torch.nn.Softmax(dim = -1)
         
         
-    def encode(self, inputs_tokens, inputs_masks):
+    def encode(self, input_pos_embeddings, inputs_masks):
         
-        ##Input embeddings##
-        input_embeddings = self.input_embedding(inputs_tokens) * math.sqrt(self.d_model)
-        # print(f"input embeddings : {input_embeddings.shape}")
-
-        ##Add Positional Encoding##
-        input_pos_embeddings = self.inp_pos_encoding(input_embeddings)
-        # print(f"input_pos_embeddings : {input_pos_embeddings.shape}")
         
         ##Encoder forward##
         temp = input_pos_embeddings
@@ -55,16 +52,8 @@ class Transformer(torch.nn.Module):
         return input_encodings
 
 
-    def decode(self, outputs_tokens, input_encodings, inputs_masks, outputs_masks):
+    def decode(self, output_pos_embeddings, input_encodings, inputs_masks, outputs_masks):
 
-        ##Output embeddings##
-        output_embeddings = self.output_embedding(outputs_tokens) * math.sqrt(self.d_model)
-        # print(f"output embeddings : {output_embeddings.shape}")
-
-        ##Add Positional Encoding##
-        output_pos_embeddings = self.out_pos_encoding(output_embeddings)
-        # print(f"output_pos_embeddings : {output_pos_embeddings.shape}")
-        
         ##Decoder Forward##
         temp = output_pos_embeddings
         for layer in self.decoder:
@@ -78,20 +67,39 @@ class Transformer(torch.nn.Module):
     def forward(self, inputs, outputsShifted):
         
         
-        inputs_tokens, inputs_masks = inputs["encodings"].to(self.device),inputs["masks"].to(self.device)
-        outputs_tokens, outputs_masks = outputsShifted["decoder_input_encodings"].to(self.device),outputsShifted["masks"].to(self.device)
+        inputs_tokens, inputs_masks = inputs["encodings"].to(self.device), inputs["masks"].to(self.device)
+        outputs_tokens, outputs_masks = outputsShifted["decoder_input_encodings"].to(self.device), outputsShifted["masks"].to(self.device)
         
         # print(f"inputs_tokens : {inputs_tokens.shape}")
         # print(f"inputs_masks : {inputs_masks.shape}")
         # print(f"outputs_tokens : {outputs_tokens.shape}")
         # print(f"outputs_masks : {outputs_masks.shape}")
         
+        ##Input embeddings##
+        # input_embeddings = self.input_embedding(inputs_tokens) * math.sqrt(self.d_model)
+        input_embeddings = self.embedding(inputs_tokens) * math.sqrt(self.d_model)
+        # print(f"input embeddings : {input_embeddings.shape}")
+
+        ##Add Positional Encoding##
+        input_pos_embeddings = self.inp_pos_encoding(input_embeddings)
+        # print(f"input_pos_embeddings : {input_pos_embeddings.shape}")
+        
+        ##Output embeddings##
+        # output_embeddings = self.output_embedding(outputs_tokens) * math.sqrt(self.d_model)
+        output_embeddings = self.embedding(outputs_tokens) * math.sqrt(self.d_model)
+        # print(f"output embeddings : {output_embeddings.shape}")
+
+        ##Add Positional Encoding##
+        output_pos_embeddings = self.out_pos_encoding(output_embeddings)
+        # print(f"output_pos_embeddings : {output_pos_embeddings.shape}")
+        
+        
         ##Encoder forward##
-        input_encodings = self.encode(inputs_tokens, inputs_masks)
+        input_encodings = self.encode(input_pos_embeddings, inputs_masks)
         # print(f"input_encodings : {input_encodings.shape}")
         
         ##Decoder Forward##
-        decodings = self.decode(outputs_tokens, input_encodings, inputs_masks, outputs_masks)
+        decodings = self.decode(output_pos_embeddings, input_encodings, inputs_masks, outputs_masks)
         # print(f"decodings : {decodings.shape}")
 
         ##Final Probabilities##
@@ -105,14 +113,14 @@ class Transformer(torch.nn.Module):
 class EncoderLayer(torch.nn.Module):
     
     
-    def __init__(self, d_model, d_ff, dropout, device ="cpu"):
+    def __init__(self, noHeads, d_model, d_ff, dropout, device ="cpu"):
 
         super(EncoderLayer, self).__init__()
         
-        self.subLayer_1 = torch.nn.ModuleList([MultiHeadAttention(d_model = d_model, device = device),
+        self.subLayer_1 = torch.nn.ModuleList([MultiHeadAttention(noHeads = noHeads, d_model = d_model, device = device),
                            nn.Dropout(dropout),
                            AddNorm(d_model, device = device)])
-        self.subLayer_2 = torch.nn.ModuleList([FeedForward(d_model, d_ff, dropout, device = device),
+        self.subLayer_2 = torch.nn.ModuleList([FeedForward(d_model, d_ff, device = device),
                            nn.Dropout(dropout),
                            AddNorm(d_model, device = device)])
         
@@ -147,17 +155,17 @@ class EncoderLayer(torch.nn.Module):
 class DecoderLayer(torch.nn.Module):
     
     
-    def __init__(self, d_model, d_ff, dropout, device ="cpu"):
+    def __init__(self, noHeads, d_model, d_ff, dropout, device ="cpu"):
 
         super(DecoderLayer, self).__init__()
         
-        self.subLayer_1 = torch.nn.ModuleList([MultiHeadAttention(d_model = d_model, device = device),
+        self.subLayer_1 = torch.nn.ModuleList([MultiHeadAttention(noHeads = noHeads, d_model = d_model, device = device),
                            nn.Dropout(dropout),
                            AddNorm(d_model, device = device)])
-        self.subLayer_2 = torch.nn.ModuleList([MultiHeadAttention(d_model = d_model, device = device),
+        self.subLayer_2 = torch.nn.ModuleList([MultiHeadAttention(noHeads = noHeads, d_model = d_model, device = device),
                            nn.Dropout(dropout),
                            AddNorm(d_model, device = device)])
-        self.subLayer_3 = torch.nn.ModuleList([FeedForward(d_model, d_ff, dropout, device = device),
+        self.subLayer_3 = torch.nn.ModuleList([FeedForward(d_model, d_ff, device = device),
                            nn.Dropout(dropout),
                            AddNorm(d_model, device = device)])
         
@@ -225,9 +233,9 @@ class MultiHeadAttention(torch.nn.Module):
         query_transf = self.linearLayers[1](query).view(nbatches, -1, self.noHeads, self.d_k).transpose(1, 2)
         value_transf = self.linearLayers[2](value).view(nbatches, -1, self.noHeads, self.d_k).transpose(1, 2)
 
-        # print(f"key_transf : {key_transf.shape}")
-        # print(f"query_transf : {query_transf.shape}")
-        # print(f"value_transf : {value_transf.shape}")
+#         print(f"key_transf : {key_transf.shape}")
+#         print(f"query_transf : {query_transf.shape}")
+#         print(f"value_transf : {value_transf.shape}")
 
         if masks is not None:
             # Same mask applied to all h heads.
@@ -325,19 +333,18 @@ class LayerNorm(torch.nn.Module):
 class FeedForward(torch.nn.Module):
     
     
-    def __init__(self, d_model, d_ff, dropout, device ="cpu"):
+    def __init__(self, d_model, d_ff, device ="cpu"):
 
         super(FeedForward, self).__init__()
 
         self.w1 = torch.nn.Linear(in_features = d_model, out_features = d_ff, device = device)
         self.w2 = torch.nn.Linear(in_features = d_ff, out_features = d_model, device = device)
-        self.dropout = nn.Dropout(dropout)
         
 
     def forward(self, x):
         
                 
-        return self.w2(self.dropout(self.w1(x)))
+        return self.w2(torch.relu(self.w1(x)))
 
 
 
