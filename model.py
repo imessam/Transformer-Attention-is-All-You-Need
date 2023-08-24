@@ -7,8 +7,8 @@ from torchvision import transforms
 
 class Transformer(torch.nn.Module):
     
-    def __init__(self, src_vocabSize, tgt_vocabSize, src_max_len = 150, tgt_max_len = 150, noHeads = 8, d_model = 512, d_ff = 2048, 
-                 dropout = 0.1, noEncoder = 6, noDecoder = 6, pad_index = 2, device ="cpu"):
+    def __init__(self, src_vocabSize, tgt_vocabSize, pad_index, src_max_len = 150, tgt_max_len = 150, noHeads = 8, d_model = 512, d_ff = 2048, 
+                 dropout = 0.1, noEncoder = 6, noDecoder = 6, device ="cpu"):
 
         super(Transformer, self).__init__()
         self.device = device
@@ -76,7 +76,6 @@ class Transformer(torch.nn.Module):
         # print(f"outputs_masks : {outputs_masks.shape}")
         
         ##Input embeddings##
-        # input_embeddings = self.input_embedding(inputs_tokens) * math.sqrt(self.d_model)
         input_embeddings = self.embedding(inputs_tokens) * math.sqrt(self.d_model)
         # print(f"input embeddings : {input_embeddings.shape}")
 
@@ -85,7 +84,6 @@ class Transformer(torch.nn.Module):
         # print(f"input_pos_embeddings : {input_pos_embeddings.shape}")
         
         ##Output embeddings##
-        # output_embeddings = self.output_embedding(outputs_tokens) * math.sqrt(self.d_model)
         output_embeddings = self.embedding(outputs_tokens) * math.sqrt(self.d_model)
         # print(f"output embeddings : {output_embeddings.shape}")
 
@@ -227,7 +225,6 @@ class MultiHeadAttention(torch.nn.Module):
     def forward(self, key, query, value, masks = None):
 
         nbatches = key.shape[0]
-        
         ##Key, Query, Value projections##
         key_transf = self.linearLayers[0](key).view(nbatches, -1, self.noHeads, self.d_k).transpose(1, 2)
         query_transf = self.linearLayers[1](query).view(nbatches, -1, self.noHeads, self.d_k).transpose(1, 2)

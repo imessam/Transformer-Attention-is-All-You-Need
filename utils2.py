@@ -3,6 +3,7 @@ import gc
 import torch
 import datetime
 import copy
+import math
 from copy import deepcopy
 from time import sleep
 from operator import itemgetter
@@ -70,32 +71,6 @@ def create_train_bpe_tokenizer(folders_map, data_map, tokenizers_path):
         tokenizer.save(os.path.join(tokenizers_path,f"tokenizer_shared.json"))
     
     return tokenizer
-    
-def create_train_bpe_tokenizer_old(folders_map,data_map, tokenizers_path):
-    
-    tokenizers = {}
-    for lang in tqdm(data_map.keys(),"training tokenizer per language ..."):
-        print(os.path.exists(os.path.join(tokenizers_path,f"tokenizer-{lang}.json")),os.path.join(tokenizers_path,f"tokenizer-{lang}.json"))
-        if os.path.exists(os.path.join(tokenizers_path,f"tokenizer-{lang}.json")):
-            print("loading pretrained  ...." + os.path.join(tokenizers_path,f"tokenizer-{lang}.json"))
-            tokenizer = Tokenizer.from_file(os.path.join(tokenizers_path,f"tokenizer-{lang}.json"))
-        else:
-            files = []
-            tokenizer, trainer = init_bpe_tokenizer()
-            for split in data_map[lang].keys():
-                if split == "val":
-                    continue
-                files.append(os.path.join(folders_map[split],f"{split}.{lang}"))
-
-            tokenizer.train(files, trainer)
-            tokenizer.save(os.path.join(tokenizers_path,f"tokenizer-{lang}.json"))
-        tokenizer = process_tokenizer(tokenizer)
-        tokenizer.enable_padding(pad_id = tokenizer.token_to_id("[PAD]"), pad_token = "[PAD]")
-        tokenizers[lang] = (tokenizer)
-
-    
-    return tokenizers
-
 
 
 
@@ -147,22 +122,6 @@ def extractTokens(data_text,tokenizer):
     return data_tokens
 
 
-def extractTokens_old(data_text,tokenizers):
-    
-    data_tokens = data_text
-    
-    for lang in tqdm(data_tokens.keys(),"extracting tokens ..."):
-        tokenizer = tokenizers[lang]
-        for split in data_tokens[lang].keys():
-            if split  != "train":
-                max_len = len(data_tokens[lang]["train"][0])
-                tokenizer.enable_padding(length = max_len, pad_id = tokenizer.token_to_id("[PAD]"), pad_token = "[PAD]")
-                tokenizer.enable_truncation(max_length = max_len)
-            data_tokens[lang][split] = tokenizer.encode_batch(data_text[lang][split])
-    gc.collect()        
-    return data_tokens
-
-
 
 def extractEncodings(data_tokens):
     
@@ -177,8 +136,7 @@ def extractEncodings(data_tokens):
 
 
 
-def translationLoss(output, target, pad_index = 2, label_smoothing = 0.1):
-    
+def translationLoss(output, target, pad_index, label_smoothing = 0.1):
     
 
     loss_func = torch.nn.CrossEntropyLoss(ignore_index    = pad_index,
@@ -193,7 +151,7 @@ def translationLoss(output, target, pad_index = 2, label_smoothing = 0.1):
     
     
     
-def train_model(model, trainLoaders, lossFn, optimizer, pad_index = 2, label_smoothing = 0.1,
+def train_model(model, trainLoaders, lossFn, optimizer, pad_index, label_smoothing = 0.1,
                 scheduler = None, num_epochs=1, device = "cpu", 
                 isSave = False, filename = "transformer-weights", verbose = True):
     
@@ -330,7 +288,7 @@ def evaluate_model(model, test_data, tokenizer, device = "cpu"):
 
 
 
-def subsequent_mask(tokens, mode, pad_index = 2, device = "cpu"):
+def subsequent_mask(tokens, mode, pad_index, device = "cpu"):
     "Mask out subsequent positions."
     size = tokens.size(-1)
     attn_shape = (1, size, size)
@@ -374,50 +332,44 @@ def score(outputs, labels, tokenizer, kind = "bleu"):
 def infer(model, input_text, tokenizer, device = "cpu"):
     
     model.eval()
-    
-    # tokenizer_en, tokenizer_de = tokenizers["en"], tokenizers["de"]
-    
-    # eos_idx = tokenizer_de.token_to_id("[EOS]")
+        
     eos_idx = tokenizer.token_to_id("[EOS]")
-    
-    # input_tokens = torch.tensor([tokenizer_en.encode(input_text).ids]).to(device)
-    # input_tokens = input_tokens[input_tokens != tokenizer_en.token_to_id("[BOS]")].view((input_tokens.shape[0],input_tokens.shape[1]-1))
     
     input_tokens = torch.tensor([tokenizer.encode(input_text).ids]).to(device)
     input_tokens = input_tokens[input_tokens != tokenizer.token_to_id("[BOS]")].view((input_tokens.shape[0],input_tokens.shape[1]-1))
-    # print(f"input_tokens : {input_tokens.shape}")
-    # print(f"input_tokens : {input_tokens}")
     
-    # print(f"Input English Sentence : {tokenizer_en.decode(input_tokens[0].tolist())}")
     print(f"Input English Sentence : {tokenizer.decode(input_tokens[0].tolist())}")
     
-    # input_masks = subsequent_mask(input_tokens, pad_index = tokenizer_en.token_to_id("[PAD]"), mode = "input", device = device)
     input_masks = subsequent_mask(input_tokens, pad_index = tokenizer.token_to_id("[PAD]"), mode = "input", device = device)
+    # print(f"input_masks : {input_masks.shape}")
+    
+    input_embeddings = model.embedding(input_tokens) * math.sqrt(model.d_model)
+    # print(f"input embeddings : {input_embeddings.shape}")
 
-    print(f"input_masks : {input_masks.shape}")
-    print(f"input_masks : {input_masks}")
-        
-    input_encodings = model.encode(input_tokens, input_masks)
+    input_pos_embeddings = model.inp_pos_encoding(input_embeddings)
+    # print(f"input_pos_embeddings : {input_pos_embeddings.shape}")
+
+    input_encodings = model.encode(input_pos_embeddings, input_masks)
     # print(f"input_encodings : {input_encodings.shape}")
-    # print(f"input_encodings : {input_encodings}")
 
-    
-    # outputs_tokens = torch.tensor([[tokenizer_de.token_to_id("[BOS]")]]).to(device).type_as(input_tokens)
-    outputs_tokens = torch.tensor([[tokenizer.token_to_id("[BOS]")]]).to(device).type_as(input_tokens)
 
-    # print(f"outputs_tokens : {outputs_tokens.shape}")
-    # print(f"outputs_tokens : {outputs_tokens}")
+    output_tokens = torch.tensor([[tokenizer.token_to_id("[BOS]")]]).to(device).type_as(input_tokens)
     
-    
-    while((outputs_tokens[:,-1] != eos_idx) and (outputs_tokens.shape[-1] < 200)):
+    while((output_tokens[:,-1] != eos_idx) and (output_tokens.shape[-1] < 200)):
         
-        # outputs_masks = subsequent_mask(outputs_tokens, pad_index = tokenizer_de.token_to_id("[PAD]"), mode = "output", device = device)
-        outputs_masks = subsequent_mask(outputs_tokens, pad_index = tokenizer.token_to_id("[PAD]"), mode = "output", device = device)
-
+        outputs_masks = subsequent_mask(output_tokens, pad_index = tokenizer.token_to_id("[PAD]"), mode = "output", device = device)
         # print(f"outputs_masks : {outputs_masks.shape}")
         # print(f"outputs_masks : {outputs_masks}")
         
-        decodings  = model.decode(outputs_tokens, input_encodings, input_masks, outputs_masks).to(device)
+        ##Output embeddings##
+        output_embeddings = model.embedding(output_tokens) * math.sqrt(model.d_model)
+        # print(f"output embeddings : {output_embeddings.shape}")
+
+        ##Add Positional Encoding##
+        output_pos_embeddings = model.out_pos_encoding(output_embeddings)
+        # print(f"output_pos_embeddings : {output_pos_embeddings.shape}")
+
+        decodings  = model.decode(output_pos_embeddings, input_encodings, input_masks, outputs_masks).to(device)
         # print(f"decodings : {decodings.shape}")
         # print(f"decodings : {decodings}")
         
@@ -426,19 +378,18 @@ def infer(model, input_text, tokenizer, device = "cpu"):
         # print(f"output_scores : {output_scores}")
         
         
-        output_proba = model.softmax(output_scores)
-#         print(f"output_proba : {output_proba.shape}")
+        output_proba = torch.softmax(output_scores, dim = -1)
+        # print(f"output_proba : {output_proba.shape}")
 #         print(output_proba)
         
         next_word = torch.argmax(output_proba, dim = -1).unsqueeze(0)
         # print(f"next_word : {next_word.shape}")
         
-        outputs_tokens = torch.cat([outputs_tokens,next_word],dim = -1)
-        # print(f"outputs_tokens : {outputs_tokens.shape}")
-        # print(outputs_tokens)
+        output_tokens = torch.cat([output_tokens,next_word],dim = -1)
+        # print(f"output_tokens : {output_tokens.shape}")
+        # print(output_tokens)
         
         
 
-    # return tokenizer_de.decode(outputs_tokens[0].tolist())
-    return tokenizer.decode(outputs_tokens[0].tolist())
+    return tokenizer.decode(output_tokens[0].tolist())
 

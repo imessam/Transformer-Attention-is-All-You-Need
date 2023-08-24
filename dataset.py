@@ -6,7 +6,7 @@ from torch.utils.data import Dataset
 
 class WMT(Dataset):
     
-    def __init__(self,inpt_encodings,tgt_encodings, eos_index = 1, pad_index = 2):
+    def __init__(self,inpt_encodings,tgt_encodings, eos_index, pad_index):
         
         
         self.inpt_encodings = inpt_encodings[:,1:]
